@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>家族電子票券管理</title>
+  <!-- 引入 Bootstrap 讓手機版排版好看 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- 引入 JsBarcode 用來產生條碼 -->
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .app-header { background-color: #ff9800; color: white; padding: 15px; text-align: center; font-weight: bold; font-size: 1.2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .ticket-card { border-radius: 12px; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px; }
+    .ticket-title { font-size: 1.25rem; font-weight: 600; color: #333; }
+    .expire-date { font-size: 0.9rem; font-weight: 500; }
+    .expire-soon { color: #dc3545; } /* 快過期顯示紅色 */
+    .barcode-container { text-align: center; margin: 15px 0; background-color: white; padding: 10px; border-radius: 8px; border: 1px dashed #ccc;}
+    .barcode-container svg { max-width: 100%; height: auto; }
+    .controls { background: white; padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    #loading { display: none; text-align: center; margin: 20px; }
+  </style>
+</head>
+<body>
+
+  <div class="app-header">
+    🎫 家族電子票券管理
+  </div>
+
+  <div class="container mt-3">
+    <!-- 控制面板：篩選與新增 -->
+    <div class="controls row g-2 align-items-center">
+      <div class="col-8">
+        <select id="locationFilter" class="form-select" onchange="renderTickets()">
+          <option value="All">顯示全部地點</option>
+          <!-- 地點選單會自動產生 -->
+        </select>
+      </div>
+      <div class="col-4">
+        <button class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#addTicketModal">+ 新增</button>
+      </div>
+    </div>
+
+    <!-- 載入中動畫 -->
+    <div id="loading">
+      <div class="spinner-border text-warning" role="status"></div>
+      <p class="mt-2 text-muted">讀取票券中...</p>
+    </div>
+
+    <!-- 票券列表顯示區 -->
+    <div id="ticketList" class="row"></div>
+  </div>
+
+  <!-- 新增票券的視窗 (Modal) -->
+  <div class="modal fade" id="addTicketModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">新增電子票券</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="addForm">
+            <div class="mb-3">
+              <label class="form-label">票券名稱 (例如: 大麥克套餐)</label>
+              <input type="text" class="form-control" id="newName" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">兌換地點 (例如: 麥當勞)</label>
+              <input type="text" class="form-control" id="newLocation" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">條碼號碼 (請輸入票券上的英數字)</label>
+              <input type="text" class="form-control" id="newBarcode" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">到期時間</label>
+              <input type="date" class="form-control" id="newExpireDate" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="submitBtn">儲存票券</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 引入 Bootstrap JS 功能 -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  
+  <script>
+    // ==========================================
+    // ⚠️ 請將下方的網址換成你剛剛發布的 Apps Script 網址
+    // ==========================================
+    const API_URL = "https://script.google.com/macros/s/AKfycbyzsfVnU8CxxDjZYJXReaw-wkIg91FQogPE9ehOnoPnw9Q6x05dHRmB6pjfRM53t5zd/exec"; 
+    
+    let allTickets = [];
+
+    // 網頁載入時自動讀取資料
+    window.onload = function() {
+      fetchTickets();
+    };
+
+    // 從 Google Sheet 抓取資料
+    function fetchTickets() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('ticketList').innerHTML = '';
+
+      fetch(API_URL)
+        .then(response => response.json())
+        .then(data => {
+          // 只保留「未使用」的票券
+          allTickets = data.filter(ticket => ticket.status === '未使用');
+          
+          // 依照「到期時間」由近到遠排序
+          allTickets.sort((a, b) => new Date(a.expireDate) - new Date(b.expireDate));
+          
+          updateLocationFilter();
+          renderTickets();
+          document.getElementById('loading').style.display = 'none';
+        })
+        .catch(error => {
+          alert("讀取資料失敗，請檢查網址是否正確。");
+          document.getElementById('loading').style.display = 'none';
+        });
+    }
+
+    // 自動整理出有哪些「地點」，並更新下拉選單
+    function updateLocationFilter() {
+      const locations = [...new Set(allTickets.map(t => t.location))];
+      const filterSelect = document.getElementById('locationFilter');
+      filterSelect.innerHTML = '<option value="All">顯示全部地點</option>';
+      locations.forEach(loc => {
+        filterSelect.innerHTML += `<option value="${loc}">${loc}</option>`;
+      });
+    }
+
+    // 把票券顯示在畫面上
+    function renderTickets() {
+      const selectedLocation = document.getElementById('locationFilter').value;
+      const listContainer = document.getElementById('ticketList');
+      listContainer.innerHTML = '';
+
+      let ticketsToShow = allTickets;
+      if (selectedLocation !== 'All') {
+        ticketsToShow = allTickets.filter(t => t.location === selectedLocation);
+      }
+
+      if (ticketsToShow.length === 0) {
+        listContainer.innerHTML = '<div class="text-center mt-5 text-muted">目前沒有未使用的票券喔！</div>';
+        return;
+      }
+
+      ticketsToShow.forEach(ticket => {
+        // 計算是否快過期 (7天內)
+        const today = new Date();
+        const expireDate = new Date(ticket.expireDate);
+        const diffTime = Math.abs(expireDate - today);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const dateClass = (expireDate >= today && diffDays <= 7) ? 'expire-soon' : 'text-muted';
+
+        const cardHtml = `
+          <div class="col-12 col-md-6 col-lg-4">
+            <div class="card ticket-card">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="ticket-title">${ticket.name}</div>
+                  <span class="badge bg-secondary">${ticket.location}</span>
+                </div>
+                <div class="expire-date ${dateClass} mt-1">⏳ 到期日：${ticket.expireDate}</div>
+                
+                <div class="barcode-container">
+                  <svg id="barcode-${ticket.id}"></svg>
+                  <div class="mt-1 small text-muted">${ticket.barcode}</div>
+                </div>
+
+                <button class="btn btn-outline-success w-100" onclick="useTicket('${ticket.id}', '${ticket.name}')">
+                  ✅ 結帳完成，標記為已使用
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        listContainer.innerHTML += cardHtml;
+      });
+
+      // 產生條碼圖片
+      ticketsToShow.forEach(ticket => {
+        try {
+          JsBarcode(`#barcode-${ticket.id}`, ticket.barcode, {
+            format: "CODE128",
+            width: 2,
+            height: 50,
+            displayValue: false
+          });
+        } catch(e) {
+          console.log("條碼生成錯誤:", e);
+        }
+      });
+    }
+
+    // 新增票券的表單送出事件
+    document.getElementById('addForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      btn.innerText = '儲存中...';
+      btn.disabled = true;
+
+      const formData = new URLSearchParams();
+      formData.append('action', 'add');
+      formData.append('name', document.getElementById('newName').value);
+      formData.append('location', document.getElementById('newLocation').value);
+      formData.append('barcode', document.getElementById('newBarcode').value);
+      formData.append('expireDate', document.getElementById('newExpireDate').value);
+
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData
+      })
+      .then(response => response.text())
+      .then(result => {
+        alert("新增成功！");
+        bootstrap.Modal.getInstance(document.getElementById('addTicketModal')).hide();
+        document.getElementById('addForm').reset();
+        btn.innerText = '儲存票券';
+        btn.disabled = false;
+        fetchTickets(); // 重新載入最新資料
+      });
+    });
+
+    // 標記票券為已使用
+    function useTicket(id, name) {
+      if(confirm(`確定這張【${name}】已經兌換使用了嗎？\n(確認後將不會再顯示於列表中)`)) {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('ticketList').innerHTML = '';
+
+        const formData = new URLSearchParams();
+        formData.append('action', 'use');
+        formData.append('id', id);
+
+        fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData
+        })
+        .then(response => response.text())
+        .then(result => {
+          fetchTickets(); // 重新載入最新資料
+        });
+      }
+    }
+  </script>
+</body>
+</html>
