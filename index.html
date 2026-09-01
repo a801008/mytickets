@@ -4,11 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>電子票券管理</title>
-  <!-- 引入 Bootstrap 讓手機版排版好看 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <!-- 引入 JsBarcode 用來產生一維條碼 -->
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-  <!-- [新增] 引入 QRCode.js 用來產生二維 QR Code -->
+  <!-- 修正過的 QR Code 產生器套件 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -16,16 +14,15 @@
     .ticket-card { border-radius: 12px; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px; }
     .ticket-title { font-size: 1.25rem; font-weight: 600; color: #333; }
     .expire-date { font-size: 0.9rem; font-weight: 500; }
-    .expire-soon { color: #dc3545; } /* 快過期顯示紅色 */
-    /* [修改] 條碼容器，移除虛線邊框，使其容納兩個碼 */
-    .barcode-container { text-align: center; margin: 15px 0; background-color: white; padding: 10px; border-radius: 8px; /* 移除 border: 1px dashed #ccc; */ }
+    .expire-soon { color: #dc3545; font-weight: bold; } /* 快過期顯示紅色字體 */
+    
+    .barcode-container { text-align: center; background-color: white; padding: 10px; border-radius: 8px; }
     .barcode-container svg { max-width: 100%; height: auto; }
-    /* [新增] QR Code 的專用樣式 */
     .qrcode-wrap {
         border: 1px dashed #ccc;
         border-radius: 4px;
         padding: 5px;
-        margin-bottom: 15px; /* 與一維碼分開 */
+        margin-bottom: 15px;
     }
     .controls { background: white; padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     #loading { display: none; text-align: center; margin: 20px; }
@@ -38,12 +35,10 @@
   </div>
 
   <div class="container mt-3">
-    <!-- 控制面板：篩選與新增 -->
     <div class="controls row g-2 align-items-center">
       <div class="col-8">
         <select id="locationFilter" class="form-select" onchange="renderTickets()">
           <option value="All">顯示全部地點</option>
-          <!-- 地點選單會自動產生 -->
         </select>
       </div>
       <div class="col-4">
@@ -51,17 +46,14 @@
       </div>
     </div>
 
-    <!-- 載入中動畫 -->
     <div id="loading">
       <div class="spinner-border text-warning" role="status"></div>
       <p class="mt-2 text-muted">讀取票券中...</p>
     </div>
 
-    <!-- 票券列表顯示區 -->
     <div id="ticketList" class="row"></div>
   </div>
 
-  <!-- 新增票券的視窗 (Modal) -->
   <div class="modal fade" id="addTicketModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -85,7 +77,8 @@
             </div>
             <div class="mb-3">
               <label class="form-label">到期時間</label>
-              <input type="date" class="form-control" id="newExpireDate" required>
+              <!-- [修改 1] 加入 max="9999-12-31" 限制年份為四位數 -->
+              <input type="date" class="form-control" id="newExpireDate" max="9999-12-31" required>
             </div>
             <button type="submit" class="btn btn-primary w-100" id="submitBtn">儲存票券</button>
           </form>
@@ -94,23 +87,20 @@
     </div>
   </div>
 
-  <!-- 引入 Bootstrap JS 功能 -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   
   <script>
     // ==========================================
-    // ⚠️ 請將下方的網址換成你剛剛發布的 Apps Script 網址
+    // ⚠️ 請換成你的 Apps Script 網址
     // ==========================================
     const API_URL = "https://script.google.com/macros/s/AKfycbyzsfVnU8CxxDjZYJXReaw-wkIg91FQogPE9ehOnoPnw9Q6x05dHRmB6pjfRM53t5zd/exec"; 
     
     let allTickets = [];
 
-    // 網頁載入時自動讀取資料
     window.onload = function() {
       fetchTickets();
     };
 
-    // 從 Google Sheet 抓取資料
     function fetchTickets() {
       document.getElementById('loading').style.display = 'block';
       document.getElementById('ticketList').innerHTML = '';
@@ -118,12 +108,8 @@
       fetch(API_URL)
         .then(response => response.json())
         .then(data => {
-          // 只保留「未使用」的票券
           allTickets = data.filter(ticket => ticket.status === '未使用');
-          
-          // 依照「到期時間」由近到遠排序
           allTickets.sort((a, b) => new Date(a.expireDate) - new Date(b.expireDate));
-          
           updateLocationFilter();
           renderTickets();
           document.getElementById('loading').style.display = 'none';
@@ -134,7 +120,6 @@
         });
     }
 
-    // 自動整理出有哪些「地點」，並更新下拉選單
     function updateLocationFilter() {
       const locations = [...new Set(allTickets.map(t => t.location))];
       const filterSelect = document.getElementById('locationFilter');
@@ -144,7 +129,6 @@
       });
     }
 
-    // 把票券顯示在畫面上
     function renderTickets() {
       const selectedLocation = document.getElementById('locationFilter').value;
       const listContainer = document.getElementById('ticketList');
@@ -161,12 +145,26 @@
       }
 
       ticketsToShow.forEach(ticket => {
-        // 計算是否快過期 (7天內)
+        // [修改 2] 判斷過期邏輯
         const today = new Date();
+        today.setHours(0,0,0,0); // 把今天的時間歸零，只比較日期
         const expireDate = new Date(ticket.expireDate);
-        const diffTime = Math.abs(expireDate - today);
+        expireDate.setHours(0,0,0,0);
+        
+        const diffTime = expireDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        const dateClass = (expireDate >= today && diffDays <= 7) ? 'expire-soon' : 'text-muted';
+        
+        let dateHtml = '';
+        if (diffDays < 0) {
+            // 已過期：加上 Bootstrap 的 bg-danger (紅底) 與 text-white (白字)
+            dateHtml = `<div class="expire-date mt-1"><span class="bg-danger text-white px-2 py-1 rounded">❌ 已過期：${ticket.expireDate}</span></div>`;
+        } else if (diffDays <= 7) {
+            // 快過期 (7天內)：紅字
+            dateHtml = `<div class="expire-date expire-soon mt-1">⏳ 快到期：${ticket.expireDate}</div>`;
+        } else {
+            // 正常狀態
+            dateHtml = `<div class="expire-date text-muted mt-1">📅 到期日：${ticket.expireDate}</div>`;
+        }
 
         const cardHtml = `
           <div class="col-12 col-md-6 col-lg-4">
@@ -176,20 +174,26 @@
                   <div class="ticket-title">${ticket.name}</div>
                   <span class="badge bg-secondary">${ticket.location}</span>
                 </div>
-                <div class="expire-date ${dateClass} mt-1">⏳ 到期日：${ticket.expireDate}</div>
                 
-                <!-- [修改] 條碼容器，同時容納兩個碼 -->
-                <div class="barcode-container d-flex flex-column align-items-center">
-                    <!-- [新增] QR Code 的 HTML 容器 -->
-                    <div class="qrcode-wrap mb-2">
-                        <div id="qrcode-${ticket.id}"></div>
-                    </div>
-                    <!-- [新增] 為一維條碼加底部邊距 -->
-                    <svg id="barcode-${ticket.id}" class="mb-2"></svg>
-                    <div class="mt-1 small text-muted">${ticket.barcode}</div>
+                ${dateHtml}
+                
+                <!-- [修改 3] 折疊按鈕：點擊時才執行 renderCodes 畫圖 -->
+                <button class="btn btn-sm btn-outline-primary w-100 mt-3 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${ticket.id}" onclick="renderCodes('${ticket.id}', '${ticket.barcode}')">
+                  👀 點我顯示條碼結帳
+                </button>
+
+                <!-- 折疊內容區 (預設隱藏) -->
+                <div class="collapse" id="collapse-${ticket.id}">
+                  <div class="barcode-container d-flex flex-column align-items-center mt-2">
+                      <div class="qrcode-wrap mb-2">
+                          <div id="qrcode-${ticket.id}"></div>
+                      </div>
+                      <svg id="barcode-${ticket.id}" class="mb-2"></svg>
+                      <div class="mt-1 small text-muted">${ticket.barcode}</div>
+                  </div>
                 </div>
 
-                <button class="btn btn-outline-success w-100" onclick="useTicket('${ticket.id}', '${ticket.name}')">
+                <button class="btn btn-outline-success w-100 mt-2" onclick="useTicket('${ticket.id}', '${ticket.name}')">
                   ✅ 結帳完成，標記為已使用
                 </button>
               </div>
@@ -198,45 +202,42 @@
         `;
         listContainer.innerHTML += cardHtml;
       });
+      // 移除原本一開始就全部產生圖片的迴圈，改由按鈕點擊觸發
+    }
 
-      // [修改] 產生條碼和 QR Code 圖片
-      ticketsToShow.forEach(ticket => {
-        // 1. 產生一維條碼 (保留原功能)
-        try {
-          JsBarcode(`#barcode-${ticket.id}`, ticket.barcode, {
-            format: "CODE128",
-            width: 2,
-            height: 50,
-            displayValue: false
-          });
-        } catch(e) {
-          console.log("條碼生成錯誤:", e);
-        }
+    // [修改 3] 新增一個函數：只有當使用者點開折疊區時，才產生條碼，節省手機效能
+    window.renderCodes = function(id, barcodeText) {
+        const qrcodeContainer = document.getElementById(`qrcode-${id}`);
+        // 如果裡面已經有圖片了，就不重複產生
+        if (qrcodeContainer.innerHTML !== '') return;
 
-        // 2. [新增] 產生二維 QR Code
+        // 產生 QR Code
         try {
-            // 獲取容器
-            const qrcodeContainer = document.getElementById(`qrcode-${ticket.id}`);
-            if (qrcodeContainer) {
-                // 清空舊的內容，防止重複產生
-                qrcodeContainer.innerHTML = '';
-                // 產生 QR Code
-                new QRCode(qrcodeContainer, {
-                    text: ticket.barcode, // 用原本的條碼數字
-                    width: 128,          // 大小
-                    height: 128,
-                    colorDark : "#000000",
-                    colorLight : "#ffffff",
-                    correctLevel : QRCode.CorrectLevel.H // 高容錯率
-                });
-            }
+            new QRCode(qrcodeContainer, {
+                text: barcodeText,
+                width: 128,
+                height: 128,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.H
+            });
         } catch(e) {
             console.log("QR Code 生成錯誤:", e);
         }
-      });
-    }
 
-    // 新增票券的表單送出事件
+        // 產生一維條碼
+        try {
+            JsBarcode(`#barcode-${id}`, barcodeText, {
+                format: "CODE128",
+                width: 2,
+                height: 50,
+                displayValue: false
+            });
+        } catch(e) {
+            console.log("條碼生成錯誤:", e);
+        }
+    };
+
     document.getElementById('addForm').addEventListener('submit', function(e) {
       e.preventDefault();
       const btn = document.getElementById('submitBtn');
@@ -262,11 +263,10 @@
         document.getElementById('addForm').reset();
         btn.innerText = '儲存票券';
         btn.disabled = false;
-        fetchTickets(); // 重新載入最新資料
+        fetchTickets(); 
       });
     });
 
-    // 標記票券為已使用
     function useTicket(id, name) {
       if(confirm(`確定這張【${name}】已經兌換使用了嗎？\n(確認後將不會再顯示於列表中)`)) {
         document.getElementById('loading').style.display = 'block';
@@ -283,7 +283,7 @@
         })
         .then(response => response.text())
         .then(result => {
-          fetchTickets(); // 重新載入最新資料
+          fetchTickets();
         });
       }
     }
