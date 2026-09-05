@@ -6,7 +6,6 @@
   <title>電子票券管理</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-  <!-- 修正過的 QR Code 產生器套件 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -14,26 +13,17 @@
     .ticket-card { border-radius: 12px; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px; }
     .ticket-title { font-size: 1.25rem; font-weight: 600; color: #333; }
     .expire-date { font-size: 0.9rem; font-weight: 500; }
-    .expire-soon { color: #dc3545; font-weight: bold; } /* 快過期顯示紅色字體 */
+    .expire-soon { color: #dc3545; font-weight: bold; }
     
     .barcode-container { text-align: center; background-color: white; padding: 10px; border-radius: 8px; }
     .barcode-container svg { max-width: 100%; height: auto; }
-    .qrcode-wrap {
-        border: 1px dashed #ccc;
-        border-radius: 4px;
-        padding: 5px;
-        margin-bottom: 15px;
-    }
+    .qrcode-wrap { border: 1px dashed #ccc; border-radius: 4px; padding: 5px; margin-bottom: 15px; }
     .controls { background: white; padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     #loading { display: none; text-align: center; margin: 20px; }
   </style>
 </head>
 <body>
-
-  <div class="app-header">
-    🎫 電子票券管理
-  </div>
-
+  <div class="app-header">🎫 電子票券管理</div>
   <div class="container mt-3">
     <div class="controls row g-2 align-items-center">
       <div class="col-8">
@@ -45,12 +35,10 @@
         <button class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#addTicketModal">+ 新增</button>
       </div>
     </div>
-
     <div id="loading">
       <div class="spinner-border text-warning" role="status"></div>
       <p class="mt-2 text-muted">讀取票券中...</p>
     </div>
-
     <div id="ticketList" class="row"></div>
   </div>
 
@@ -77,7 +65,6 @@
             </div>
             <div class="mb-3">
               <label class="form-label">到期時間</label>
-              <!-- [修改 1] 加入 max="9999-12-31" 限制年份為四位數 -->
               <input type="date" class="form-control" id="newExpireDate" max="9999-12-31" required>
             </div>
             <button type="submit" class="btn btn-primary w-100" id="submitBtn">儲存票券</button>
@@ -101,12 +88,35 @@
       fetchTickets();
     };
 
+    // [優化 2] 防範 XSS 攻擊的跳脫函數
+    function escapeHTML(str) {
+        if (!str) return '';
+        return String(str).replace(/[&<>'"]/g, 
+            tag => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[tag])
+        );
+    }
+
+    // [修正] 去除後端送來時可能帶有的單引號
+    function getCleanBarcode(barcode) {
+        return String(barcode || '').replace(/^'/, '');
+    }
+
     function fetchTickets() {
       document.getElementById('loading').style.display = 'block';
       document.getElementById('ticketList').innerHTML = '';
 
+      // [優化 3] 增加網路錯誤的捕捉
       fetch(API_URL)
-        .then(response => response.json())
+        .then(response => {
+          if (!response.ok) throw new Error('網路回應狀態異常');
+          return response.json();
+        })
         .then(data => {
           allTickets = data.filter(ticket => ticket.status === '未使用');
           allTickets.sort((a, b) => new Date(a.expireDate) - new Date(b.expireDate));
@@ -115,7 +125,8 @@
           document.getElementById('loading').style.display = 'none';
         })
         .catch(error => {
-          alert("讀取資料失敗，請檢查網址是否正確。");
+          console.error(error);
+          alert("讀取資料失敗，請檢查網址是否正確或稍後再試。");
           document.getElementById('loading').style.display = 'none';
         });
     }
@@ -125,15 +136,14 @@
       const filterSelect = document.getElementById('locationFilter');
       filterSelect.innerHTML = '<option value="All">顯示全部地點</option>';
       locations.forEach(loc => {
-        filterSelect.innerHTML += `<option value="${loc}">${loc}</option>`;
+        filterSelect.innerHTML += `<option value="${escapeHTML(loc)}">${escapeHTML(loc)}</option>`;
       });
     }
 
     function renderTickets() {
       const selectedLocation = document.getElementById('locationFilter').value;
       const listContainer = document.getElementById('ticketList');
-      listContainer.innerHTML = '';
-
+      
       let ticketsToShow = allTickets;
       if (selectedLocation !== 'All') {
         ticketsToShow = allTickets.filter(t => t.location === selectedLocation);
@@ -144,10 +154,12 @@
         return;
       }
 
+      // [優化 1] 將所有 HTML 組裝好後再一次性渲染，提升效能
+      let allCardsHtml = '';
+
       ticketsToShow.forEach(ticket => {
-        // [修改 2] 判斷過期邏輯
         const today = new Date();
-        today.setHours(0,0,0,0); // 把今天的時間歸零，只比較日期
+        today.setHours(0,0,0,0); 
         const expireDate = new Date(ticket.expireDate);
         expireDate.setHours(0,0,0,0);
         
@@ -156,62 +168,67 @@
         
         let dateHtml = '';
         if (diffDays < 0) {
-            // 已過期：加上 Bootstrap 的 bg-danger (紅底) 與 text-white (白字)
-            dateHtml = `<div class="expire-date mt-1"><span class="bg-danger text-white px-2 py-1 rounded">❌ 已過期：${ticket.expireDate}</span></div>`;
+            dateHtml = `<div class="expire-date mt-1"><span class="bg-danger text-white px-2 py-1 rounded">❌ 已過期：${escapeHTML(ticket.expireDate)}</span></div>`;
         } else if (diffDays <= 7) {
-            // 快過期 (7天內)：紅字
-            dateHtml = `<div class="expire-date expire-soon mt-1">⏳ 快到期：${ticket.expireDate}</div>`;
+            dateHtml = `<div class="expire-date expire-soon mt-1">⏳ 快到期：${escapeHTML(ticket.expireDate)}</div>`;
         } else {
-            // 正常狀態
-            dateHtml = `<div class="expire-date text-muted mt-1">📅 到期日：${ticket.expireDate}</div>`;
+            dateHtml = `<div class="expire-date text-muted mt-1">📅 到期日：${escapeHTML(ticket.expireDate)}</div>`;
         }
 
-        const cardHtml = `
+        // 使用跳脫函數處理所有文字，防止 XSS
+        const safeName = escapeHTML(ticket.name);
+        const safeLocation = escapeHTML(ticket.location);
+        const safeBarcode = escapeHTML(getCleanBarcode(ticket.barcode));
+
+        allCardsHtml += `
           <div class="col-12 col-md-6 col-lg-4">
             <div class="card ticket-card">
               <div class="card-body">
                 <div class="d-flex justify-content-between align-items-start">
-                  <div class="ticket-title">${ticket.name}</div>
-                  <span class="badge bg-secondary">${ticket.location}</span>
+                  <div class="ticket-title">${safeName}</div>
+                  <span class="badge bg-secondary">${safeLocation}</span>
                 </div>
                 
                 ${dateHtml}
                 
-                <!-- [修改 3] 折疊按鈕：點擊時才執行 renderCodes 畫圖 -->
-                <button class="btn btn-sm btn-outline-primary w-100 mt-3 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${ticket.id}" onclick="renderCodes('${ticket.id}', '${ticket.barcode}')">
+                <!-- 更改：直接傳遞 ID 尋找，避免因為名稱特殊符號造成的錯誤 -->
+                <button class="btn btn-sm btn-outline-primary w-100 mt-3 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${ticket.id}" onclick="renderCodes('${ticket.id}')">
                   👀 點我顯示條碼結帳
                 </button>
 
-                <!-- 折疊內容區 (預設隱藏) -->
                 <div class="collapse" id="collapse-${ticket.id}">
                   <div class="barcode-container d-flex flex-column align-items-center mt-2">
                       <div class="qrcode-wrap mb-2">
                           <div id="qrcode-${ticket.id}"></div>
                       </div>
                       <svg id="barcode-${ticket.id}" class="mb-2"></svg>
-                      <div class="mt-1 small text-muted">${ticket.barcode}</div>
+                      <div class="mt-1 small text-muted">${safeBarcode}</div>
                   </div>
                 </div>
 
-                <button class="btn btn-outline-success w-100 mt-2" onclick="useTicket('${ticket.id}', '${ticket.name}')">
+                <button class="btn btn-outline-success w-100 mt-2" onclick="useTicket('${ticket.id}')">
                   ✅ 結帳完成，標記為已使用
                 </button>
               </div>
             </div>
           </div>
         `;
-        listContainer.innerHTML += cardHtml;
       });
-      // 移除原本一開始就全部產生圖片的迴圈，改由按鈕點擊觸發
+
+      // 一次性寫入 DOM
+      listContainer.innerHTML = allCardsHtml;
     }
 
-    // [修改 3] 新增一個函數：只有當使用者點開折疊區時，才產生條碼，節省手機效能
-    window.renderCodes = function(id, barcodeText) {
+    window.renderCodes = function(id) {
+        // 從資料陣列中抓取這張票，避免依賴按鈕傳入文字參數
+        const ticket = allTickets.find(t => t.id === id);
+        if (!ticket) return;
+
         const qrcodeContainer = document.getElementById(`qrcode-${id}`);
-        // 如果裡面已經有圖片了，就不重複產生
         if (qrcodeContainer.innerHTML !== '') return;
 
-        // 產生 QR Code
+        const barcodeText = getCleanBarcode(ticket.barcode);
+
         try {
             new QRCode(qrcodeContainer, {
                 text: barcodeText,
@@ -225,7 +242,6 @@
             console.log("QR Code 生成錯誤:", e);
         }
 
-        // 產生一維條碼
         try {
             JsBarcode(`#barcode-${id}`, barcodeText, {
                 format: "CODE128",
@@ -244,11 +260,16 @@
       btn.innerText = '儲存中...';
       btn.disabled = true;
 
+      const inputBarcode = document.getElementById('newBarcode').value;
       const formData = new URLSearchParams();
+      
       formData.append('action', 'add');
       formData.append('name', document.getElementById('newName').value);
       formData.append('location', document.getElementById('newLocation').value);
-      formData.append('barcode', document.getElementById('newBarcode').value);
+      
+      // [修正] 條碼開頭加上單引號(')，迫使試算表將其存為純文字以保留 0
+      formData.append('barcode', "'" + inputBarcode); 
+      
       formData.append('expireDate', document.getElementById('newExpireDate').value);
 
       fetch(API_URL, {
@@ -264,10 +285,18 @@
         btn.innerText = '儲存票券';
         btn.disabled = false;
         fetchTickets(); 
+      })
+      .catch(error => {
+        alert("儲存失敗，請檢查網路連線。");
+        btn.innerText = '儲存票券';
+        btn.disabled = false;
       });
     });
 
-    function useTicket(id, name) {
+    function useTicket(id) {
+      const ticket = allTickets.find(t => t.id === id);
+      const name = ticket ? ticket.name : '此票券';
+
       if(confirm(`確定這張【${name}】已經兌換使用了嗎？\n(確認後將不會再顯示於列表中)`)) {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('ticketList').innerHTML = '';
@@ -283,6 +312,10 @@
         })
         .then(response => response.text())
         .then(result => {
+          fetchTickets();
+        })
+        .catch(error => {
+          alert("更新狀態失敗，請稍後再試！");
           fetchTickets();
         });
       }
