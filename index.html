@@ -17,7 +17,7 @@
     
     .barcode-container { text-align: center; background-color: white; padding: 10px; border-radius: 8px; }
     .barcode-container svg { max-width: 100%; height: auto; }
-    .qrcode-wrap { border: 1px dashed #ccc; border-radius: 4px; padding: 5px; margin-bottom: 15px; }
+    .qrcode-wrap { border: 1px dashed #ccc; border-radius: 4px; padding: 5px; margin-bottom: 15px; display: inline-block; }
     .controls { background: white; padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     #loading { display: none; text-align: center; margin: 20px; }
   </style>
@@ -88,7 +88,6 @@
       fetchTickets();
     };
 
-    // [優化 2] 防範 XSS 攻擊的跳脫函數
     function escapeHTML(str) {
         if (!str) return '';
         return String(str).replace(/[&<>'"]/g, 
@@ -102,16 +101,15 @@
         );
     }
 
-    // [修正] 去除後端送來時可能帶有的單引號
     function getCleanBarcode(barcode) {
         return String(barcode || '').replace(/^'/, '');
     }
 
+    // 只有初次載入或手動刷新時才呼叫這個函數
     function fetchTickets() {
       document.getElementById('loading').style.display = 'block';
       document.getElementById('ticketList').innerHTML = '';
 
-      // [優化 3] 增加網路錯誤的捕捉
       fetch(API_URL)
         .then(response => {
           if (!response.ok) throw new Error('網路回應狀態異常');
@@ -154,7 +152,6 @@
         return;
       }
 
-      // [優化 1] 將所有 HTML 組裝好後再一次性渲染，提升效能
       let allCardsHtml = '';
 
       ticketsToShow.forEach(ticket => {
@@ -175,10 +172,11 @@
             dateHtml = `<div class="expire-date text-muted mt-1">📅 到期日：${escapeHTML(ticket.expireDate)}</div>`;
         }
 
-        // 使用跳脫函數處理所有文字，防止 XSS
         const safeName = escapeHTML(ticket.name);
         const safeLocation = escapeHTML(ticket.location);
         const safeBarcode = escapeHTML(getCleanBarcode(ticket.barcode));
+        // 過濾 ID 中的特殊符號，確保 HTML ID 格式合法
+        const safeDomId = String(ticket.id).replace(/[^a-zA-Z0-9_-]/g, '');
 
         allCardsHtml += `
           <div class="col-12 col-md-6 col-lg-4">
@@ -191,17 +189,14 @@
                 
                 ${dateHtml}
                 
-                <!-- 更改：直接傳遞 ID 尋找，避免因為名稱特殊符號造成的錯誤 -->
-                <button class="btn btn-sm btn-outline-primary w-100 mt-3 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${ticket.id}" onclick="renderCodes('${ticket.id}')">
+                <button class="btn btn-sm btn-outline-primary w-100 mt-3 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${safeDomId}" onclick="renderCodes('${ticket.id}', '${safeDomId}')">
                   👀 點我顯示條碼結帳
                 </button>
 
-                <div class="collapse" id="collapse-${ticket.id}">
+                <div class="collapse" id="collapse-${safeDomId}">
                   <div class="barcode-container d-flex flex-column align-items-center mt-2">
-                      <div class="qrcode-wrap mb-2">
-                          <div id="qrcode-${ticket.id}"></div>
-                      </div>
-                      <svg id="barcode-${ticket.id}" class="mb-2"></svg>
+                      <div class="qrcode-wrap mb-2" id="qrcode-${safeDomId}"></div>
+                      <svg id="barcode-${safeDomId}" class="mb-2"></svg>
                       <div class="mt-1 small text-muted">${safeBarcode}</div>
                   </div>
                 </div>
@@ -215,16 +210,19 @@
         `;
       });
 
-      // 一次性寫入 DOM
       listContainer.innerHTML = allCardsHtml;
     }
 
-    window.renderCodes = function(id) {
-        // 從資料陣列中抓取這張票，避免依賴按鈕傳入文字參數
-        const ticket = allTickets.find(t => t.id === id);
+    // 修復 1：確保字串與數字比對正確，並且直接綁定 DOM
+    window.renderCodes = function(originalId, domId) {
+        // 使用 String() 強制將兩邊轉成字串來比對，解決型別不一致導致找不到資料的問題
+        const ticket = allTickets.find(t => String(t.id) === String(originalId));
         if (!ticket) return;
 
-        const qrcodeContainer = document.getElementById(`qrcode-${id}`);
+        const qrcodeContainer = document.getElementById(`qrcode-${domId}`);
+        const barcodeContainer = document.getElementById(`barcode-${domId}`);
+        
+        // 避免重複渲染
         if (qrcodeContainer.innerHTML !== '') return;
 
         const barcodeText = getCleanBarcode(ticket.barcode);
@@ -243,7 +241,8 @@
         }
 
         try {
-            JsBarcode(`#barcode-${id}`, barcodeText, {
+            // 直接傳遞 DOM 元素給 JsBarcode，避免字串當作 CSS 選擇器時出錯
+            JsBarcode(barcodeContainer, barcodeText, {
                 format: "CODE128",
                 width: 2,
                 height: 50,
@@ -266,10 +265,7 @@
       formData.append('action', 'add');
       formData.append('name', document.getElementById('newName').value);
       formData.append('location', document.getElementById('newLocation').value);
-      
-      // [修正] 條碼開頭加上單引號(')，迫使試算表將其存為純文字以保留 0
-      formData.append('barcode', "'" + inputBarcode); 
-      
+      formData.append('barcode', "'" + inputBarcode); // 保留開頭的 0
       formData.append('expireDate', document.getElementById('newExpireDate').value);
 
       fetch(API_URL, {
@@ -284,7 +280,7 @@
         document.getElementById('addForm').reset();
         btn.innerText = '儲存票券';
         btn.disabled = false;
-        fetchTickets(); 
+        fetchTickets(); // 新增完後重新拉取最新列表
       })
       .catch(error => {
         alert("儲存失敗，請檢查網路連線。");
@@ -293,29 +289,31 @@
       });
     });
 
-    function useTicket(id) {
-      const ticket = allTickets.find(t => t.id === id);
+    // 修復 2：樂觀 UI 更新，結帳瞬間畫面先消失，背景再傳送資料
+    function useTicket(originalId) {
+      const ticket = allTickets.find(t => String(t.id) === String(originalId));
       const name = ticket ? ticket.name : '此票券';
 
       if(confirm(`確定這張【${name}】已經兌換使用了嗎？\n(確認後將不會再顯示於列表中)`)) {
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('ticketList').innerHTML = '';
+        
+        // 🚀 【速度優化】直接把這張票從目前的變數中移除，並重新渲染畫面
+        allTickets = allTickets.filter(t => String(t.id) !== String(originalId));
+        renderTickets(); // 畫面瞬間更新，不用等！
 
         const formData = new URLSearchParams();
         formData.append('action', 'use');
-        formData.append('id', id);
+        formData.append('id', originalId);
 
+        // 背景默默發送給 Google 更新
         fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: formData
         })
-        .then(response => response.text())
-        .then(result => {
-          fetchTickets();
-        })
         .catch(error => {
-          alert("更新狀態失敗，請稍後再試！");
+          // 只有在真正失敗的時候才提示，並重新讀取資料
+          console.error("更新狀態失敗:", error);
+          alert("背景更新狀態失敗，將重新載入最新資料！");
           fetchTickets();
         });
       }
